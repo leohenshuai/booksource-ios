@@ -393,7 +393,7 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
         case "pbPick":
             pickReply = id
             DispatchQueue.main.async {
-                let pk = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.zip, UTType.data], asCopy: false)
+                let pk = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.item], asCopy: true)
                 pk.delegate = self; pk.allowsMultipleSelection = false
                 self.present(pk, animated: true)
             }
@@ -439,20 +439,14 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
     func documentPicker(_ c: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let id = pickReply, let u = urls.first else { return }
         pickReply = nil
-        let acc = u.startAccessingSecurityScopedResource()
+        reply(id, ["ok": true, "stage": "picked", "name": u.lastPathComponent])
         DispatchQueue.global(qos: .userInitiated).async {
-            // 拷到临时目录，避免安全域在后续读取时失效
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("backup_in.zip")
-            try? FileManager.default.removeItem(at: tmp)
-            do { try FileManager.default.copyItem(at: u, to: tmp) } catch {
-                if acc { u.stopAccessingSecurityScopedResource() }
-                return self.reply(id, ["ok": false, "err": "复制文件失败：\(error.localizedDescription)"]) }
-            if acc { u.stopAccessingSecurityScopedResource() }
-            guard let b = Backup(url: tmp) else { return self.reply(id, ["ok": false, "err": "不是有效的 zip（或为 zip64，暂不支持）"]) }
-            guard b.entries.contains(where: { $0.name == "sql.mrbf" }) else { return self.reply(id, ["ok": false, "err": "备份包里没有 sql.mrbf，不是用心读书备份"]) }
-            guard let rows = b.sites() else { return self.reply(id, ["ok": false, "err": "读取书源表失败"]) }
+            let size = ((try? FileManager.default.attributesOfItem(atPath: u.path)[.size]) as? Int) ?? 0
+            guard let b = Backup(url: u) else { return self.reply("pb_result", ["ok": false, "err": "无法解析 zip（\(u.lastPathComponent)，\(size) 字节）。可能不是 zip，或为 zip64"]) }
+            guard b.entries.contains(where: { $0.name == "sql.mrbf" }) else { return self.reply("pb_result", ["ok": false, "err": "备份包里没有 sql.mrbf（共 \(b.entries.count) 个文件），不是用心读书备份"]) }
+            guard let rows = b.sites() else { return self.reply("pb_result", ["ok": false, "err": "读取书源表失败：sql.mrbf 无法打开或没有 customSite 表"]) }
             self.backup = b
-            self.reply(id, ["ok": true, "name": u.lastPathComponent, "sites": rows])
+            self.reply("pb_result", ["ok": true, "name": u.lastPathComponent, "sites": rows])
         }
     }
     func documentPickerWasCancelled(_ c: UIDocumentPickerViewController) {
