@@ -45,12 +45,30 @@ var source = { key: '', bookSourceUrl: '', getKey: function () { return ''; }, g
 var org = { jsoup: { Jsoup: { parse: __un('jsoup') } } };
 var getVariable = function () { return ''; }, getArguments = function () { return {}; };
 var cache = { get: function () { return null; }, put: function () { return ''; } };
+var CryptoJS = undefined;
 var book = {}, speakText = '', title = '', result = '', key = '', page = 1, baseUrl = '';
 var btoa = function (s) { return __b64e(String(s)); }, atob = function (s) { return __b64d(String(s)); };
 
+function __runCfg(o) {
+  var config = o.config, keyword = o.kw;
+  config.keyword = o.kw; config.pageIndex = 1;
+  var params = config.params, host = config.host, header = config.header;
+  try {
+    if (o.lib) { try { (0, eval)(o.lib); } catch (e) { if (/UNSUPPORTED/.test(String(e.message))) throw e; } }
+    if (/@get\{[^}]+\}/.test(o.code)) throw new Error('NEEDPRE:脚本依赖前置请求的变量');
+    var body = "(function(config,keyword,params,host,header){" + o.code + "\n})";
+    var f = (0, eval)(body);
+    var r = f(config, keyword, params, host, header);
+    if (r && typeof r === 'object') config = r;
+    return JSON.stringify({ ok: true, config: config });
+  } catch (e) {
+    return JSON.stringify({ ok: false, err: String((e && e.message) || e).slice(0, 120) });
+  }
+}
 function __run(inp) {
   var o;
   try { o = JSON.parse(inp); } catch (e) { return JSON.stringify({ ok: false, err: 'bad input' }); }
+  if (o.mode === 'config') return __runCfg(o);
   var src = o.src || {}, base = src.bookSourceUrl || '';
   key = o.key; page = o.page || 1; baseUrl = base;
   source.key = base; source.bookSourceUrl = base; source.getKey = function () { return base; }; source.bookSourceName = src.bookSourceName;

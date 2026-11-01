@@ -64,6 +64,9 @@ body{margin:0;font:16px/1.45 -apple-system,"SF Pro Text","PingFang SC",sans-seri
 .btn.s{background:var(--chip)}
 .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .tools .btn{padding:9px 15px;font-size:14px}
+.seg{display:flex;gap:4px;padding:3px;border-radius:999px;background:var(--chip);margin-bottom:10px}
+.seg button{flex:1;border:0;border-radius:999px;padding:8px;font:600 14px -apple-system,sans-serif;color:var(--sub);background:transparent;transition:all .35s var(--spring)}
+.seg button.on{color:var(--tx);background:linear-gradient(145deg,var(--g1),var(--g2));box-shadow:inset 0 1px 0 var(--hi),0 3px 10px var(--gs)}
 /* 选择文件 */
 .drop{border-radius:20px;padding:20px 14px;text-align:center;color:var(--sub);position:relative;background:var(--chip);border:1px dashed var(--sep);transition:transform .4s var(--spring)}
 .drop:active{transform:scale(.97)}
@@ -75,9 +78,19 @@ details summary::-webkit-details-marker{display:none}
 .set input{width:100%;margin-top:4px;padding:10px;border:0;border-radius:12px;background:var(--chip);color:var(--tx);font-size:16px;outline:none}
 /* 搜索与列表 */
 #q{width:100%;padding:11px 14px;border:0;border-radius:999px;background:var(--chip);color:var(--tx);font-size:16px;outline:none;margin-bottom:6px}
-.item{display:flex;gap:11px;padding:12px 2px;border-top:.5px solid var(--sep)}.item:first-child{border-top:0}
-.dot{flex:none;width:5px;border-radius:3px;margin:3px 0}
-.dot.OK{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.UNCERTAIN{background:var(--un);box-shadow:0 0 8px var(--un)}.dot.DEAD{background:var(--dead);box-shadow:0 0 8px var(--dead)}.dot.WAIT{background:var(--wait)}
+.item{display:flex;gap:10px;padding:9px 2px;border-top:.5px solid var(--sep);align-items:center;cursor:pointer}.item:first-child{border-top:0}
+.item .bd{min-width:0;flex:1}
+.item .l1{display:flex;align-items:baseline;gap:8px}
+.item .nm{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.item .st{flex:none;font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--chip)}
+.item .st.OK{color:var(--ok)}.item .st.UNCERTAIN{color:var(--un)}.item .st.DEAD{color:var(--dead)}.item .st.WAIT,.item .st.KEEP{color:var(--sub)}
+.item .l2{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.item .more2{display:none;margin-top:6px;font-size:13px;word-break:break-all}
+.item.open .more2{display:block}.item.open .l2{white-space:normal}
+.item .chev{flex:none;color:var(--sub);font-size:12px;transition:transform .3s}.item.open .chev{transform:rotate(90deg)}
+.dot{align-self:stretch;margin:2px 0}
+.dot{flex:none;width:4px;border-radius:3px}
+.dot.OK{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.UNCERTAIN{background:var(--un);box-shadow:0 0 8px var(--un)}.dot.DEAD{background:var(--dead);box-shadow:0 0 8px var(--dead)}.dot.WAIT,.dot.KEEP{background:var(--wait)}
 .nm{font-weight:600;word-break:break-all}.u{font-size:12.5px;color:var(--sub);word-break:break-all}
 .m{font-size:13.5px;margin-top:3px}.m.OK{color:var(--ok)}.m.UNCERTAIN{color:var(--un)}.m.DEAD{color:var(--dead)}.m.WAIT{color:var(--sub)}
 .ms{color:var(--sub);font-size:11.5px;margin-left:4px}
@@ -104,7 +117,9 @@ h3{margin:0 0 2px;font-size:15px}
 </div>
 
 <div class="card glass">
- <div class="drop"><input type="file" id="file" accept=".json,.txt"><div id="dtxt">📂 <b>点击选择书源 JSON</b></div></div>
+ <div class="seg"><button class="on" id="m1" onclick="setMode('json')">Legado JSON</button><button id="m2" onclick="setMode('pb')">用心读书备份</button></div>
+ <div class="drop" id="dropJ"><input type="file" id="file" accept=".json,.txt"><div id="dtxt">📂 <b>点击选择书源 JSON</b></div></div>
+ <div class="drop" id="dropP" style="display:none" onclick="pickBackup()"><div id="ptxt">🗂 <b>点击选择用心读书备份 zip</b></div></div>
  <details><summary>⚙︎ 检测参数</summary><div class="set">
   <div><label>并发</label><input type="number" id="conc" value="20" min="1" max="40"></div>
   <div><label>超时(秒)</label><input type="number" id="to" value="12"></div>
@@ -117,13 +132,14 @@ h3{margin:0 0 2px;font-size:15px}
 <div class="card glass"><input id="q" type="search" placeholder="搜索名称 / 地址 / 原因" oninput="lim=100;render()"><div id="list"></div></div>
 
 <div class="card glass"><h3>导出</h3>
- <div class="tools"><button class="btn tint" onclick="exp('OK')">可用</button><button class="btn tint" onclick="exp('OKU')">可用+疑似</button><button class="btn s" onclick="exp('UNCERTAIN')">疑似</button><button class="btn s" onclick="exp('DEAD')">失效</button></div></div>
+ <div class="tools"><button class="btn tint" id="btnExpBk" style="display:none" onclick="expBackup()">导出清理后的备份 zip</button><span id="btnExpJ" style="display:contents"><button class="btn tint" onclick="exp('OK')">可用</button><button class="btn tint" onclick="exp('OKU')">可用+疑似</button><button class="btn s" onclick="exp('UNCERTAIN')">疑似</button><button class="btn s" onclick="exp('DEAD')">失效</button></span></div></div>
 
 <nav class="dock glass">
  <button class="btn tint" id="go" disabled><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>开始检测</button>
  <button class="btn" id="pause" disabled>暂停</button>
 </nav>
 <script src="engine.js"></script>
+<script src="pb.js"></script>
 <script>
 const __cb={};let __n=0;
 window.__nativeReply=(id,o)=>{const f=__cb[id];if(f){delete __cb[id];f(o)}};
@@ -137,24 +153,30 @@ const ENG=BSEngine(native,{});
 </script>
 <script>
 let src=[],res=[],paused=false,running=false,filter='ALL',lim=100,online=true,wl=null,t0=0,d0=0;
-const $=id=>document.getElementById(id),K='bsc_v2',NM={OK:'可用',UNCERTAIN:'疑似',DEAD:'失效',WAIT:'待测'};
-function save(){try{localStorage.setItem(K,JSON.stringify({src,res}))}catch(e){}}
+const $=id=>document.getElementById(id),K='bsc_v2',NM={OK:'可用',UNCERTAIN:'疑似',DEAD:'失效',WAIT:'待测',KEEP:'加密'};
+function save(){try{if(mode=='pb')return;localStorage.setItem(K,JSON.stringify({src,res}))}catch(e){}}
 function load(){try{let d=JSON.parse(localStorage.getItem(K));if(d&&d.src){src=d.src;res=d.res;$('go').disabled=false}}catch(e){}}
 function clr(){if(running||!confirm('清空已载入的书源和结果？'))return;src=[];res=[];localStorage.removeItem(K);$('dtxt').innerHTML='📂 <b>点击选择书源 JSON</b>';$('go').disabled=true;render()}
 $('file').onchange=async e=>{let f=e.target.files[0];if(!f)return;let t=await f.text();try{let j=JSON.parse(t);src=Array.isArray(j)?j:[j]}catch(x){alert('JSON 解析失败');return}
 res=src.map(_=>({state:'WAIT',msg:'待检测'}));$('go').disabled=false;$('dtxt').innerHTML='✅ '+esc(f.name)+'（'+src.length+' 条）';save();render()};
-function dedupe(){if(running)return;let seen=new Set(),ns=[],nr=[];src.forEach((s,i)=>{let k=(s.bookSourceUrl||'')+'|'+(s.bookSourceName||'');if(seen.has(k))return;seen.add(k);ns.push(s);nr.push(res[i])});
+function dedupe(){if(running)return;if(mode=='pb')return alert('备份模式下不去重（避免误删用户书源）');let seen=new Set(),ns=[],nr=[];src.forEach((s,i)=>{let k=(s.bookSourceUrl||'')+'|'+(s.bookSourceName||'');if(seen.has(k))return;seen.add(k);ns.push(s);nr.push(res[i])});
 alert(`去重：${src.length} → ${ns.length}`);src=ns;res=nr;save();render()}
 function retry(){if(running)return;let n=0;res.forEach((r,i)=>{if(r.state=='DEAD'){res[i]={state:'WAIT',msg:'待检测'};n++}});if(!n)return alert('没有失效项');save();render();$('go').click()}
+function shortMsg(m){m=String(m||'');
+ const t=[[/DNS/,'域名无法解析'],[/连接超时/,'连接超时'],[/连接失败|被拒绝/,'连接失败'],[/证书/,'证书异常'],[/重置/,'连接被重置'],[/搜索接口正常返回/,'搜索正常'],[/反爬|HTTP (401|403|429)/,'被反爬/需登录'],
+ [/HTTP (\d+).*(不可用|错误)/,'HTTP $1'],[/疑似错误页/,'疑似错误页'],[/无结果/,'提示无结果'],[/内容过少/,'返回内容过少'],[/非网址|本地型/,'聚合/本地型源'],[/签名依赖前置/,'需前置令牌(未测)'],[/WebView/,'WebView(仅测站点)'],
+ [/验证码/,'需验证码(仅测站点)'],[/登录/,'需登录(仅测站点)'],[/规则已加密/,'规则加密·保留'],[/无搜索地址|searchUrl 为空|未配置搜索地址/,'无搜索地址'],[/JS|脚本|java|加密\/DOM/,'JS规则(需实测)'],[/站点可达/,'站点可达·规则未深检']];
+ for(const [re,v] of t){const x=m.match(re);if(x)return v.replace('$1',x[1]||'')}
+ return m.length>16?m.slice(0,16)+'…':m}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-function render(){let c={OK:0,UNCERTAIN:0,DEAD:0,WAIT:0};res.forEach(r=>c[r.state]++);let n=src.length,d=n-c.WAIT,p=n?Math.round(d/n*100):0;
+function render(){let c={OK:0,UNCERTAIN:0,DEAD:0,WAIT:0,KEEP:0};res.forEach(r=>c[r.state]=(c[r.state]||0)+1);let n=src.length,d=n-c.WAIT-c.KEEP,p=n?Math.round(d/n*100):0;
 $('pb').style.width=p+'%';$('pt').textContent=n?`${d} / ${n}（${p}%）`:'0%';$('sub').textContent=n?`共 ${n} 条`:'未载入';
 let el=(Date.now()-t0)/1000;if(running&&t0>0&&d>d0&&el>2){let sp=(d-d0)/el,left=c.WAIT/sp;$('eta').textContent=(isFinite(left)&&left<86400)?`约剩 ${left>90?Math.round(left/60)+' 分钟':Math.round(left)+' 秒'}`:''}else $('eta').textContent='';
-$('stats').innerHTML=[['OK','可用'],['UNCERTAIN','疑似'],['DEAD','失效'],['WAIT','待测']].map(([k,t])=>`<div class="stat ${filter==k?'on':''}" data-k="${k}" onclick="filter=filter=='${k}'?'ALL':'${k}';lim=100;render()"><b>${c[k]}</b><span>${t}</span></div>`).join('');
+$('stats').innerHTML=[['OK','可用'],['UNCERTAIN','疑似'],['DEAD','失效'],mode=='pb'?['KEEP','加密']:['WAIT','待测']].map(([k,t])=>`<div class="stat ${filter==k?'on':''}" data-k="${k}" onclick="filter=filter=='${k}'?'ALL':'${k}';lim=100;render()"><b>${c[k]}</b><span>${t}</span></div>`).join('');
 let q=$('q').value.trim().toLowerCase(),h='',m=0,tot=0;
 for(let i=0;i<n;i++){let r=res[i];if(filter!='ALL'&&r.state!=filter)continue;
 if(q&&!((src[i].bookSourceName||'')+(src[i].bookSourceUrl||'')+r.msg).toLowerCase().includes(q))continue;tot++;if(m>=lim)continue;m++;
-h+=`<div class="item"><div class="dot ${r.state}"></div><div style="min-width:0"><div class="nm">${esc(src[i].bookSourceName||'(无名)')}</div><div class="u">${esc(src[i].bookSourceUrl||'')}</div><div class="m ${r.state}">${NM[r.state]} · ${esc(r.msg)} ${r.ms?`<span class="ms">${r.ms}ms</span>`:''}</div></div></div>`}
+const sh=shortMsg(r.msg);h+=`<div class="item" onclick="this.classList.toggle('open')"><div class="dot ${r.state}"></div><div class="bd"><div class="l1"><span class="nm">${esc(src[i].bookSourceName||'(无名)')}</span><span class="st ${r.state}">${NM[r.state]}</span></div><div class="l2">${esc(sh)}${r.ms?' · '+r.ms+'ms':''}</div><div class="more2"><div class="u">${esc(src[i].bookSourceUrl||'')}</div><div class="m ${r.state}">${esc(r.msg)}</div></div></div><span class="chev">›</span></div>`}
 if(tot>m)h+=`<button class="btn s more" onclick="lim+=200;render()">再显示 200 条（${m}/${tot}）</button>`;
 $('list').innerHTML=h||`<div class="empty">${n?'没有符合的结果':'请先载入书源文件'}</div>`}
 let tm=null;function sched(){if(!tm)tm=setTimeout(()=>{tm=null;render();save()},800)}
@@ -162,10 +184,10 @@ $('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶ 继续
 function setOnline(v){online=v;$('warn').style.display=v?'none':'block'}
 $('go').onclick=async()=>{if(running)return;running=true;$('go').disabled=true;$('pause').disabled=false;t0=Date.now();d0=res.filter(r=>r.state!='WAIT').length;
 native_awake(true);
-ENG.reset();ENG.set('timeout',+$('to').value||12);ENG.set('kw',$('kw').value||'我');
+ENG.reset();pbHost.clear();ENG.set('timeout',+$('to').value||12);ENG.set('kw',$('kw').value||'我');
 let idx=res.map((r,i)=>r.state=='WAIT'?i:-1).filter(i=>i>=0),p=0,N=+$('conc').value;
 async function w(){while(p<idx.length){if(paused||!online){await new Promise(r=>setTimeout(r,500));continue}
-let i=idx[p++];try{res[i]=await ENG.check(src[i])}
+let i=idx[p++];try{res[i]=src[i]._pb?await checkPB(src[i]):await ENG.check(src[i])}
 catch(e){res[i]={state:'DEAD',msg:'检测异常：'+String(e).slice(0,60)}}sched()}}
 await Promise.all(Array.from({length:N},w));running=false;$('go').disabled=false;$('pause').disabled=true;native_awake(false);save();render()};
 async function exp(k){let o=src.filter((_,i)=>k=='OKU'?['OK','UNCERTAIN'].includes(res[i].state):res[i].state==k);if(!o.length)return alert('没有数据');
@@ -179,6 +201,33 @@ function native_awake(on){nat('keepAwake',{on})}
 load();if(src.length)$('dtxt').innerHTML='✅ 已恢复上次载入（'+src.length+' 条）';render();
 </script>
 <script>
+/* ---- 用心读书备份模式 ---- */
+const pbHost=new Map();
+async function checkPB(s){const t0=Date.now(),kw=$('kw').value||'我',to=+$('to').value||12;
+ const one=async()=>{const p=await PBPrepare(native,s._pb,kw);
+  if(p.kind=='skip')return['KEEP',p.why];
+  if(p.kind=='host'){if(!p.url)return['UNCERTAIN',p.why+'（无站点地址）'];
+   if(!pbHost.has(p.url))pbHost.set(p.url,native.http({url:p.url,method:'GET',headers:{'User-Agent':'Mozilla/5.0',Accept:'*/*'},body:null,charset:'',timeout:to}));
+   const h=await pbHost.get(p.url);if(!h.ok)return['DEAD',h.msg];
+   if(h.status>=200&&h.status<400)return['UNCERTAIN','站点可达；'+p.why];if([401,403].includes(h.status))return['UNCERTAIN','HTTP '+h.status+'；'+p.why];return['DEAD','HTTP '+h.status+' 站点不可用']}
+  const r=await native.http({url:p.req.url,method:p.req.method,headers:p.req.headers,body:p.req.body,charset:p.req.cs!='utf-8'?p.req.cs:'',timeout:to});
+  return PBJudge(r,p.req.notes)};
+ let[st,m]=await one();if(st=='DEAD'&&/超时|重置|连接失败/.test(m)){const r=await one();st=r[0];m=r[1];if(st=='DEAD')m+='（已重试）'}
+ return{state:st,msg:m,ms:Date.now()-t0}}
+let mode='json',pbRows=[];
+function setMode(m){if(running)return;mode=m;$('m1').classList.toggle('on',m=='json');$('m2').classList.toggle('on',m=='pb');$('dropJ').style.display=m=='json'?'':'none';$('dropP').style.display=m=='pb'?'':'none';
+ $('btnExpBk').style.display=m=='pb'?'':'none';$('btnExpJ').style.display=m=='pb'?'none':''}
+async function pickBackup(){$('ptxt').innerHTML='读取中…（大文件需几秒）';
+ const r=await nat('pbPick',{});if(!r.ok){$('ptxt').innerHTML='🗂 <b>点击选择用心读书备份 zip</b>'+(r.err&&r.err!='cancel'?'<div class="u">'+esc(r.err)+'</div>':'');return}
+ pbRows=r.sites.map(x=>({id:x[0],ident:x[1],name:x[2],url:x[3],xpath:x[4]}));
+ src=pbRows.map(x=>({bookSourceName:x.name,bookSourceUrl:x.url,_pb:x,_enc:!String(x.xpath).startsWith('{')}));
+ res=src.map(x=>x._enc?{state:'KEEP',msg:'规则已加密（禁止分享）'}:{state:'WAIT',msg:'待检测'});
+ $('ptxt').innerHTML='✅ '+esc(r.name)+'（'+src.length+' 条，其中 '+src.filter(x=>x._enc).length+' 条加密将保留）';$('go').disabled=false;filter='ALL';save();render()}
+async function expBackup(){const bad=src.map((x,i)=>res[i].state=='DEAD'?x._pb.id:null).filter(x=>x!==null);
+ if(!bad.length)return alert('没有失效书源可删除');
+ if(!confirm(`将从备份包中删除 ${bad.length} 条失效书源，生成新的备份 zip。\n\n加密源、可用源、疑似源都会保留。\n恢复前请先在用心读书里另做一份新备份。继续？`))return;
+ const r=await nat('pbExport',{ids:bad,name:'用心读书备份_已清理_删'+bad.length+'条.zip'});
+ if(!r.ok)alert('导出失败：'+r.err);}
 /* ---- iOS 26 动效层 ---- */
 (function(){
  const hap=()=>{try{nat('haptic',{}).catch&&0}catch(e){}};

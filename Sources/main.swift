@@ -3,6 +3,9 @@ import WebKit
 import JavaScriptCore
 import CryptoKit
 import Foundation
+import SQLite3
+import Compression
+import UniformTypeIdentifiers
 
 // MARK: - 本地资源
 final class SchemeHandler: NSObject, WKURLSchemeHandler {
@@ -162,8 +165,172 @@ final class JSBox {
     }
 }
 
+
+// MARK: - 用心读书备份包（zip 内 sql.mrbf 为明文 SQLite）
+final class Backup {
+    struct Entry { var name: String; var flag: UInt16; var method: UInt16; var time: UInt16; var date: UInt16; var crc: UInt32; var csize: UInt32; var usize: UInt32; var offset: UInt32; var extAttr: UInt32 }
+    let url: URL
+    var entries: [Entry] = []
+    var fh: FileHandle
+    init?(url: URL) {
+        self.url = url
+        guard let f = try? FileHandle(forReadingFrom: url) else { return nil }
+        fh = f
+        guard parse() else { return nil }
+    }
+    deinit { try? fh.close() }
+    func u16(_ d: Data, _ o: Int) -> UInt16 { UInt16(d[d.startIndex + o]) | UInt16(d[d.startIndex + o + 1]) << 8 }
+    func u32(_ d: Data, _ o: Int) -> UInt32 { UInt32(u16(d, o)) | UInt32(u16(d, o + 2)) << 16 }
+    func parse() -> Bool {
+        let size = (try? fh.seekToEnd()) ?? 0
+        guard size > 22 else { return false }
+        let tail = min(size, 70000)
+        try? fh.seek(toOffset: size - tail)
+        guard let d = try? fh.read(upToCount: Int(tail)) else { return false }
+        var eocd = -1
+        var i = d.count - 22
+        while i >= 0 { if d[d.startIndex + i] == 0x50 && d[d.startIndex + i + 1] == 0x4b && d[d.startIndex + i + 2] == 5 && d[d.startIndex + i + 3] == 6 { eocd = i; break }; i -= 1 }
+        guard eocd >= 0 else { return false }
+        let cnt = Int(u16(d, eocd + 10)), cdOff = UInt64(u32(d, eocd + 16)), cdSize = Int(u32(d, eocd + 12))
+        guard cnt != 0xffff, cdOff != 0xffffffff else { return false }   // 不支持 zip64
+        try? fh.seek(toOffset: cdOff)
+        guard let cd = try? fh.read(upToCount: cdSize), cd.count == cdSize else { return false }
+        var p = 0
+        for _ in 0..<cnt {
+            guard p + 46 <= cd.count, u32(cd, p) == 0x02014b50 else { return false }
+            let fl = u16(cd, p + 8), me = u16(cd, p + 10), tm = u16(cd, p + 12), dt = u16(cd, p + 14)
+            let crc = u32(cd, p + 16), cs = u32(cd, p + 20), us = u32(cd, p + 24)
+            let fnl = Int(u16(cd, p + 28)), exl = Int(u16(cd, p + 30)), cml = Int(u16(cd, p + 32))
+            let ea = u32(cd, p + 38), off = u32(cd, p + 42)
+            let nameData = cd.subdata(in: (cd.startIndex + p + 46)..<(cd.startIndex + p + 46 + fnl))
+            entries.append(Entry(name: String(decoding: nameData, as: UTF8.self), flag: fl, method: me, time: tm, date: dt, crc: crc, csize: cs, usize: us, offset: off, extAttr: ea))
+            // 保留原始名字节用于回写
+            rawNames.append(nameData)
+            p += 46 + fnl + exl + cml
+        }
+        return true
+    }
+    var rawNames: [Data] = []
+    func read(_ name: String) -> Data? {
+        guard let e = entries.first(where: { $0.name == name }) else { return nil }
+        try? fh.seek(toOffset: UInt64(e.offset))
+        guard let h = try? fh.read(upToCount: 30), h.count == 30, u32(h, 0) == 0x04034b50 else { return nil }
+        let skip = Int(u16(h, 26)) + Int(u16(h, 28))
+        try? fh.seek(toOffset: UInt64(e.offset) + 30 + UInt64(skip))
+        guard let comp = try? fh.read(upToCount: Int(e.csize)) else { return nil }
+        if e.method == 0 { return comp }
+        guard e.method == 8 else { return nil }
+        var out = Data(count: Int(e.usize))
+        let n = out.withUnsafeMutableBytes { ob in comp.withUnsafeBytes { ib in
+            compression_decode_buffer(ob.bindMemory(to: UInt8.self).baseAddress!, Int(e.usize), ib.bindMemory(to: UInt8.self).baseAddress!, comp.count, nil, COMPRESSION_ZLIB) } }
+        return n == Int(e.usize) ? out : nil
+    }
+    static func crc32(_ d: Data) -> UInt32 {
+        var table = [UInt32](repeating: 0, count: 256)
+        for i in 0..<256 { var c = UInt32(i); for _ in 0..<8 { c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1) }; table[i] = c }
+        var c: UInt32 = 0xffffffff
+        for b in d { c = table[Int((c ^ UInt32(b)) & 0xff)] ^ (c >> 8) }
+        return c ^ 0xffffffff
+    }
+    static func deflate(_ d: Data) -> Data? {
+        var out = Data(count: d.count + d.count / 8 + 1024)
+        let n = out.withUnsafeMutableBytes { ob in d.withUnsafeBytes { ib in
+            compression_encode_buffer(ob.bindMemory(to: UInt8.self).baseAddress!, ob.count, ib.bindMemory(to: UInt8.self).baseAddress!, d.count, nil, COMPRESSION_ZLIB) } }
+        guard n > 0 else { return nil }
+        return out.prefix(n)
+    }
+    /// 删除 customSite 中 id 在 ids 的行并写出新 zip；其余条目压缩字节原样拷贝
+    func rewrite(deleteIds: [Int], to out: URL) -> String? {
+        guard let sql = read("sql.mrbf") else { return "读取 sql.mrbf 失败" }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pb_\(UUID().uuidString).db")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        do { try sql.write(to: tmp) } catch { return "写临时库失败" }
+        var db: OpaquePointer?
+        guard sqlite3_open(tmp.path, &db) == SQLITE_OK else { return "打开数据库失败" }
+        defer { sqlite3_close(db) }
+        sqlite3_exec(db, "pragma journal_mode=delete", nil, nil, nil)
+        sqlite3_exec(db, "begin", nil, nil, nil)
+        var st: OpaquePointer?
+        sqlite3_prepare_v2(db, "delete from customSite where id=?", -1, &st, nil)
+        for i in deleteIds { sqlite3_bind_int64(st, 1, Int64(i)); sqlite3_step(st); sqlite3_reset(st) }
+        sqlite3_finalize(st)
+        guard sqlite3_exec(db, "commit", nil, nil, nil) == SQLITE_OK else { return "提交失败" }
+        sqlite3_exec(db, "vacuum", nil, nil, nil)
+        // 校验
+        var chk: OpaquePointer?; sqlite3_prepare_v2(db, "pragma integrity_check", -1, &chk, nil)
+        var okc = false; if sqlite3_step(chk) == SQLITE_ROW, let t = sqlite3_column_text(chk, 0) { okc = String(cString: t) == "ok" }
+        sqlite3_finalize(chk)
+        guard okc else { return "数据库完整性校验失败，已放弃" }
+        sqlite3_close(db); db = nil
+        guard let newSql = try? Data(contentsOf: tmp), let comp = Backup.deflate(newSql) else { return "压缩失败" }
+        FileManager.default.createFile(atPath: out.path, contents: nil)
+        guard let o = try? FileHandle(forWritingTo: out) else { return "创建输出失败" }
+        defer { try? o.close() }
+        func w16(_ v: UInt16) -> Data { var x = v.littleEndian; return Data(bytes: &x, count: 2) }
+        func w32(_ v: UInt32) -> Data { var x = v.littleEndian; return Data(bytes: &x, count: 4) }
+        var cdRecs: [(Entry, Data, UInt32)] = []   // entry(新), name, offset
+        var off: UInt32 = 0
+        for (idx, e) in entries.enumerated() {
+            let nm = rawNames[idx]
+            var ne = e
+            var body: Data
+            if e.name == "sql.mrbf" {
+                body = comp; ne.method = 8; ne.crc = Backup.crc32(newSql); ne.csize = UInt32(comp.count); ne.usize = UInt32(newSql.count); ne.flag = e.flag & ~UInt16(8)
+            } else {
+                try? fh.seek(toOffset: UInt64(e.offset))
+                guard let h = try? fh.read(upToCount: 30), h.count == 30 else { return "读取条目失败：\(e.name)" }
+                let skip = Int(u16(h, 26)) + Int(u16(h, 28))
+                try? fh.seek(toOffset: UInt64(e.offset) + 30 + UInt64(skip))
+                body = (try? fh.read(upToCount: Int(e.csize))) ?? Data()
+                guard body.count == Int(e.csize) else { return "条目长度不符：\(e.name)" }
+                ne.flag = e.flag & ~UInt16(8)
+            }
+            ne.offset = off
+            var hdr = Data()
+            hdr += w32(0x04034b50); hdr += w16(20); hdr += w16(ne.flag); hdr += w16(ne.method); hdr += w16(ne.time); hdr += w16(ne.date)
+            hdr += w32(ne.crc); hdr += w32(ne.csize); hdr += w32(ne.usize); hdr += w16(UInt16(nm.count)); hdr += w16(0)
+            o.write(hdr); o.write(nm); o.write(body)
+            off += UInt32(hdr.count + nm.count + body.count)
+            cdRecs.append((ne, nm, ne.offset))
+        }
+        let cdStart = off
+        var cdSize: UInt32 = 0
+        for (e, nm, _) in cdRecs {
+            var r = Data()
+            r += w32(0x02014b50); r += w16(20); r += w16(20); r += w16(e.flag); r += w16(e.method); r += w16(e.time); r += w16(e.date)
+            r += w32(e.crc); r += w32(e.csize); r += w32(e.usize); r += w16(UInt16(nm.count)); r += w16(0); r += w16(0); r += w16(0); r += w16(0)
+            r += w32(e.extAttr); r += w32(e.offset)
+            o.write(r); o.write(nm); cdSize += UInt32(r.count + nm.count)
+        }
+        var end = Data()
+        end += w32(0x06054b50); end += w16(0); end += w16(0); end += w16(UInt16(cdRecs.count)); end += w16(UInt16(cdRecs.count)); end += w32(cdSize); end += w32(cdStart); end += w16(0)
+        o.write(end)
+        return nil
+    }
+    /// 读取 customSite → [[id, ident, name, url, xpath]]
+    func sites() -> [[Any]]? {
+        guard let sql = read("sql.mrbf") else { return nil }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pbr_\(UUID().uuidString).db")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        guard (try? sql.write(to: tmp)) != nil else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(tmp.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_close(db) }
+        var st: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "select id,siteIdent,siteName,url,xpath from customSite order by \"index\",id", -1, &st, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(st) }
+        func col(_ i: Int32) -> String { sqlite3_column_text(st, i).map { String(cString: $0) } ?? "" }
+        var out: [[Any]] = []
+        while sqlite3_step(st) == SQLITE_ROW { out.append([Int(sqlite3_column_int64(st, 0)), col(1), col(2), col(3), col(4)]) }
+        return out
+    }
+}
+
 // MARK: - 主界面
-final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UIDocumentPickerDelegate {
+    var backup: Backup?
+    var pickReply: String?
+    var backupURL: URL?
     var web: WKWebView!
     let net = Net()
     lazy var jsbox = JSBox(net: net)
@@ -223,6 +390,30 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
                 let obj = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) ?? ["ok": false, "err": "解析失败"]
                 self.reply(id, obj)
             }
+        case "pbPick":
+            pickReply = id
+            DispatchQueue.main.async {
+                let pk = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.zip, UTType.data], asCopy: false)
+                pk.delegate = self; pk.allowsMultipleSelection = false
+                self.present(pk, animated: true)
+            }
+        case "pbExport":
+            let ids = (p["ids"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.intValue }
+            guard let b = backup else { return reply(id, ["ok": false, "err": "未载入备份"]) }
+            let name = p["name"] as? String ?? "backup_cleaned.zip"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let out = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                try? FileManager.default.removeItem(at: out)
+                if let e = b.rewrite(deleteIds: ids, to: out) { return self.reply(id, ["ok": false, "err": e]) }
+                let sz = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
+                DispatchQueue.main.async {
+                    let vc = UIActivityViewController(activityItems: [out], applicationActivities: nil)
+                    vc.popoverPresentationController?.sourceView = self.view
+                    vc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 40, width: 1, height: 1)
+                    self.present(vc, animated: true)
+                }
+                self.reply(id, ["ok": true, "size": sz, "deleted": ids.count])
+            }
         case "keepAwake":
             DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = (p["on"] as? Bool) ?? false }
             reply(id, ["ok": true])
@@ -242,6 +433,30 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
             reply(id, ["ok": true])
         default: reply(id, ["ok": false])
         }
+    }
+
+    // 文件选择回调：读取备份包的 customSite
+    func documentPicker(_ c: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let id = pickReply, let u = urls.first else { return }
+        pickReply = nil
+        let acc = u.startAccessingSecurityScopedResource()
+        DispatchQueue.global(qos: .userInitiated).async {
+            // 拷到临时目录，避免安全域在后续读取时失效
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("backup_in.zip")
+            try? FileManager.default.removeItem(at: tmp)
+            do { try FileManager.default.copyItem(at: u, to: tmp) } catch {
+                if acc { u.stopAccessingSecurityScopedResource() }
+                return self.reply(id, ["ok": false, "err": "复制文件失败：\(error.localizedDescription)"]) }
+            if acc { u.stopAccessingSecurityScopedResource() }
+            guard let b = Backup(url: tmp) else { return self.reply(id, ["ok": false, "err": "不是有效的 zip（或为 zip64，暂不支持）"]) }
+            guard b.entries.contains(where: { $0.name == "sql.mrbf" }) else { return self.reply(id, ["ok": false, "err": "备份包里没有 sql.mrbf，不是用心读书备份"]) }
+            guard let rows = b.sites() else { return self.reply(id, ["ok": false, "err": "读取书源表失败"]) }
+            self.backup = b
+            self.reply(id, ["ok": true, "name": u.lastPathComponent, "sites": rows])
+        }
+    }
+    func documentPickerWasCancelled(_ c: UIDocumentPickerViewController) {
+        if let id = pickReply { pickReply = nil; reply(id, ["ok": false, "err": "cancel"]) }
     }
 
     func webView(_ w: WKWebView, runJavaScriptAlertPanelWithMessage m: String, initiatedByFrame f: WKFrameInfo, completionHandler: @escaping () -> Void) {
