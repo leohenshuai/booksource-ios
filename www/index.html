@@ -99,6 +99,7 @@ details summary::-webkit-details-marker{display:none}
 h3{margin:0 0 2px;font-size:15px}
 #warn{display:none;margin-bottom:12px;padding:12px 14px;border-radius:18px;background:color-mix(in srgb,var(--dead) 20%,transparent);color:var(--dead);font-size:14px}
 #exbox{display:none}
+.sep{height:.5px;background:var(--sep);margin:14px 0 12px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:999px;background:var(--chip);font:600 14px -apple-system,"PingFang SC",sans-serif;color:var(--sub);border:1px solid transparent;transition:transform .4s var(--spring),background .25s,color .25s,border-color .25s}
 .chip:active{transform:scale(.93)}
@@ -108,10 +109,12 @@ h3{margin:0 0 2px;font-size:15px}
 .chip.on i::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
 .chip[data-k=OK].on i{background:var(--ok)}.chip[data-k=UNCERTAIN].on i{background:var(--un)}.chip[data-k=DEAD].on i{background:var(--dead)}
 .chip b{font-variant-numeric:tabular-nums;opacity:.8}
-#list{max-height:min(56vh,460px);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;margin:0 -6px;padding:0 6px;border-radius:18px;
+#list{max-height:min(28vh,230px);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;margin:0 -6px;padding:0 6px;border-radius:18px;
  -webkit-mask-image:linear-gradient(transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%);mask-image:linear-gradient(transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%)}
 #list::-webkit-scrollbar{width:3px}#list::-webkit-scrollbar-thumb{background:var(--sep);border-radius:3px}
 .lcount{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--sub);margin:0 4px 6px}
+.paused .prog i::after{animation:none!important}
+.paused #pause{color:#fff;background:linear-gradient(145deg,var(--un),#ff6b00)}
 /* 悬浮底栏 */
 .dock{background:linear-gradient(145deg,var(--g1),var(--g2)),color-mix(in srgb,var(--bg1) 55%,transparent);-webkit-backdrop-filter:blur(34px) saturate(200%);backdrop-filter:blur(34px) saturate(200%);position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:30;display:flex;gap:8px;padding:8px;border-radius:999px;width:min(440px,calc(100% - 28px))}
 .dock .btn{flex:1;padding:13px 10px;font-size:16px}.dock .btn.tint{flex:2}
@@ -142,8 +145,11 @@ h3{margin:0 0 2px;font-size:15px}
   <div><label>并发</label><input type="number" id="conc" value="20" min="1" max="40"></div>
   <div><label>超时(秒)</label><input type="number" id="to" value="12"></div>
   <div><label>关键词</label><input type="text" id="kw" value="我"></div></div></details>
- <div class="tools"><button class="btn s" onclick="dedupe()">去重</button><button class="btn s" onclick="retry()">重测失效</button><button class="btn s" onclick="clr()">清空</button></div>
+ <div class="tools" id="tools1"><button class="btn s" onclick="dedupe()">去重</button><button class="btn s" onclick="retry()">重测失效</button><button class="btn s" onclick="clr()">清空</button></div>
+ <div class="u" id="toolsHint" style="margin:6px 2px 0;min-height:14px"></div>
 </div>
+
+<div class="card glass"><input id="q" type="search" placeholder="搜索名称 / 地址 / 原因" oninput="lim=100;render()"><div class="lcount"><span id="lc"></span><span id="ltop" style="color:var(--tint);display:none" onclick="$('list').scrollTo({top:0,behavior:'smooth'})">回到顶部</span></div><div id="list"></div></div>
 
 <div class="card glass" id="expcard">
  <h3>导出</h3>
@@ -161,8 +167,6 @@ h3{margin:0 0 2px;font-size:15px}
 </div>
 
 <div class="card glass" id="exbox"></div>
-
-<div class="card glass"><input id="q" type="search" placeholder="搜索名称 / 地址 / 原因" oninput="lim=100;render()"><div class="lcount"><span id="lc"></span><span id="ltop" style="color:var(--tint);display:none" onclick="$('list').scrollTo({top:0,behavior:'smooth'})">回到顶部</span></div><div id="list"></div></div>
 
 <nav class="dock glass">
  <button class="btn tint" id="go" disabled><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>开始检测</button>
@@ -182,44 +186,55 @@ const native={
 const ENG=BSEngine(native,{});
 </script>
 <script>
+let aborted=false;function settleHeld(){/*暂停中去重：先把缓冲结果写入，保证下标对应*/flushHeld()}
+let inflight=0,held=[];function flushHeld(){while(held.length){const[i,r]=held.shift();res[i]=r}}
 let src=[],res=[],paused=false,running=false,filter='ALL',lim=100,online=true,wl=null,t0=0,d0=0;
 const $=id=>document.getElementById(id),K='bsc_v2',NM={OK:'可用',UNCERTAIN:'疑似',DEAD:'失效',WAIT:'待测',KEEP:'加密'};
 function save(){try{if(mode=='pb')return;localStorage.setItem(K,JSON.stringify({src,res}))}catch(e){}}
 function load(){try{let d=JSON.parse(localStorage.getItem(K));if(d&&d.src){src=d.src;res=d.res;$('go').disabled=false}}catch(e){}}
-function clr(){if(running||!confirm('清空已载入的书源和结果？'))return;src=[];res=[];localStorage.removeItem(K);$('dtxt').innerHTML='📂 <b>点击选择书源 JSON</b>';$('go').disabled=true;render()}
+function busy(){return running&&!paused}
+function clr(){if(busy())return;if(!confirm('清空已载入的书源和结果？'+(running?'\n（当前检测将中止）':'')))return;if(running){aborted=true;paused=false;document.body.classList.remove('paused');$('pause').textContent='⏸ 暂停'}held=[];src=[];res=[];localStorage.removeItem(K);$('dtxt').innerHTML='📂 <b>点击选择书源 JSON</b>';$('go').disabled=true;render()}
 $('file').onchange=async e=>{let f=e.target.files[0];if(!f)return;let t=await f.text();try{let j=JSON.parse(t);src=Array.isArray(j)?j:[j]}catch(x){alert('JSON 解析失败');return}
 res=src.map(_=>({state:'WAIT',msg:'待检测'}));$('go').disabled=false;$('dtxt').innerHTML='✅ '+esc(f.name)+'（'+src.length+' 条）';save();render()};
-function dedupe(){if(running)return;if(mode=='pb')return alert('备份模式下不去重（避免误删用户书源）');let seen=new Set(),ns=[],nr=[];src.forEach((s,i)=>{let k=(s.bookSourceUrl||'')+'|'+(s.bookSourceName||'');if(seen.has(k))return;seen.add(k);ns.push(s);nr.push(res[i])});
-alert(`去重：${src.length} → ${ns.length}`);src=ns;res=nr;save();render()}
-function retry(){if(running)return;let n=0;res.forEach((r,i)=>{if(r.state=='DEAD'){res[i]={state:'WAIT',msg:'待检测'};n++}});if(!n)return alert('没有失效项');save();render();$('go').click()}
+function dedupe(){if(busy())return;settleHeld();if(mode=='pb')return alert('备份模式下不去重（避免误删用户书源）');let seen=new Set(),ns=[],nr=[];src.forEach((s,i)=>{let k=(s.bookSourceUrl||'')+'|'+(s.bookSourceName||'');if(seen.has(k))return;seen.add(k);ns.push(s);nr.push(res[i])});
+alert(`去重：${src.length} → ${ns.length}`+(running?'\n（已中止当前检测，请点「开始检测」继续测剩余的）':''));if(running){aborted=true;paused=false;document.body.classList.remove('paused');$('pause').textContent='⏸ 暂停';held=[]}src=ns;res=nr;save();render()}
+function retry(){if(busy())return;if(running)return alert('请先让当前检测结束，再重测失效');let n=0;res.forEach((r,i)=>{if(r.state=='DEAD'){res[i]={state:'WAIT',msg:'待检测'};n++}});if(!n)return alert('没有失效项');save();render();$('go').click()}
 function shortMsg(m){m=String(m||'');
  const t=[[/DNS/,'域名无法解析'],[/连接超时/,'连接超时'],[/连接失败|被拒绝/,'连接失败'],[/证书/,'证书异常'],[/重置/,'连接被重置'],[/搜索接口正常返回/,'搜索正常'],[/反爬|HTTP (401|403|429)/,'被反爬/需登录'],
  [/HTTP (\d+).*(不可用|错误)/,'HTTP $1'],[/疑似错误页/,'疑似错误页'],[/无结果/,'提示无结果'],[/内容过少/,'返回内容过少'],[/非网址|本地型/,'聚合/本地型源'],[/签名依赖前置/,'需前置令牌(未测)'],[/WebView/,'WebView(仅测站点)'],
  [/验证码/,'需验证码(仅测站点)'],[/登录/,'需登录(仅测站点)'],[/规则已加密/,'规则加密·保留'],[/无搜索地址|searchUrl 为空|未配置搜索地址/,'无搜索地址'],[/JS|脚本|java|加密\/DOM/,'JS规则(需实测)'],[/站点可达/,'站点可达·规则未深检']];
  for(const [re,v] of t){const x=m.match(re);if(x)return v.replace('$1',x[1]||'')}
  return m.length>16?m.slice(0,16)+'…':m}
+function syncBtns(){const b=busy();document.querySelectorAll('#tools1 .btn').forEach(x=>{x.disabled=b});$('toolsHint').textContent=b?'检测进行中，暂停后可用':''}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function render(){let c={OK:0,UNCERTAIN:0,DEAD:0,WAIT:0,KEEP:0};res.forEach(r=>c[r.state]=(c[r.state]||0)+1);let n=src.length,tt=n-c.KEEP,d=tt-c.WAIT,p=tt?Math.round(d/tt*100):0;
 $('pb').style.width=p+'%';$('pt').textContent=n?`${d} / ${tt}（${p}%）`+(c.KEEP?`　另有 ${c.KEEP} 条加密不检测`:''):'0%';$('sub').textContent=n?`共 ${n} 条`:'未载入';
-let el=(Date.now()-t0)/1000;if(running&&t0>0&&d>d0&&el>2){let sp=(d-d0)/el,left=c.WAIT/sp;$('eta').textContent=(isFinite(left)&&left<86400)?`约剩 ${left>90?Math.round(left/60)+' 分钟':Math.round(left)+' 秒'}`:''}else $('eta').textContent='';
+let el=(Date.now()-t0)/1000;if(paused){inflightNote()}else if(running&&t0>0&&d>d0&&el>2){let sp=(d-d0)/el,left=c.WAIT/sp;$('eta').textContent=(isFinite(left)&&left<86400)?`约剩 ${left>90?Math.round(left/60)+' 分钟':Math.round(left)+' 秒'}`:''}else $('eta').textContent='';
 $('stats').innerHTML=[['OK','可用'],['UNCERTAIN','疑似'],['DEAD','失效'],mode=='pb'?['KEEP','加密']:['WAIT','待测']].map(([k,t])=>`<div class="stat ${filter==k?'on':''}" data-k="${k}" onclick="filter=filter=='${k}'?'ALL':'${k}';lim=100;render()"><b>${c[k]}</b><span>${t}</span></div>`).join('');
 let q=$('q').value.trim().toLowerCase(),h='',m=0,tot=0;
 for(let i=0;i<n;i++){let r=res[i];if(filter!='ALL'&&r.state!=filter)continue;
 if(q&&!((src[i].bookSourceName||'')+(src[i].bookSourceUrl||'')+r.msg).toLowerCase().includes(q))continue;tot++;if(m>=lim)continue;m++;
 const sh=shortMsg(r.msg);h+=`<div class="item" onclick="this.classList.toggle('open')"><div class="dot ${r.state}"></div><div class="bd"><div class="l1"><span class="nm">${esc(src[i].bookSourceName||'(无名)')}</span><span class="st ${r.state}">${NM[r.state]}</span></div><div class="l2">${esc(sh)}${r.ms?' · '+r.ms+'ms':''}</div><div class="more2"><div class="u">${esc(src[i].bookSourceUrl||'')}</div><div class="m ${r.state}">${esc(r.msg)}</div></div></div><span class="chev">›</span></div>`}
 if(tot>m)h+=`<button class="btn s more" onclick="lim+=200;render()">再显示 200 条（${m}/${tot}）</button>`;
-$('lc').textContent=n?`显示 ${Math.min(m,tot)} / ${tot} 条`+(filter!='ALL'?'（已筛选）':''):'';renderChips();const _st=$('list').scrollTop;$('list').innerHTML=h||`<div class="empty">${n?'没有符合的结果':'请先载入书源文件'}</div>`;$('list').scrollTop=_st}
+$('lc').textContent=n?`显示 ${Math.min(m,tot)} / ${tot} 条`+(filter!='ALL'?'（已筛选）':''):'';syncBtns();renderChips();const _st=$('list').scrollTop;$('list').innerHTML=h||`<div class="empty">${n?'没有符合的结果':'请先载入书源文件'}</div>`;$('list').scrollTop=_st}
 let tm=null;function sched(){if(!tm)tm=setTimeout(()=>{tm=null;render();save()},800)}
-$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶ 继续':'⏸ 暂停'};
+$('pause').onclick=()=>{paused=!paused;setTimeout(syncBtns,0);$('pause').textContent=paused?'▶ 继续':'⏸ 暂停';
+ document.body.classList.toggle('paused',paused);
+ if(paused){inflightNote();}else{flushHeld();$('eta').textContent='';render()}};
+function inflightNote(){const n=inflight;$('eta').textContent=n?`已暂停 · 等待 ${n} 条进行中的请求结束`:'已暂停';}
 function setOnline(v){online=v;$('warn').style.display=v?'none':'block'}
-$('go').onclick=async()=>{if(running)return;running=true;$('go').disabled=true;$('pause').disabled=false;t0=Date.now();d0=res.filter(r=>r.state!='WAIT').length;
+$('go').onclick=async()=>{if(running)return;running=true;setTimeout(syncBtns,0);$('go').disabled=true;$('pause').disabled=false;t0=Date.now();d0=res.filter(r=>r.state!='WAIT').length;
 native_awake(true);
 ENG.reset();pbHost.clear();ENG.set('timeout',+$('to').value||12);ENG.set('kw',$('kw').value||'我');
+inflight=0;held=[];aborted=false;paused=false;document.body.classList.remove('paused');$('pause').textContent='⏸ 暂停';
 let idx=res.map((r,i)=>r.state=='WAIT'?i:-1).filter(i=>i>=0),p=0,N=+$('conc').value;
-async function w(){while(p<idx.length){if(paused||!online){await new Promise(r=>setTimeout(r,500));continue}
-let i=idx[p++];try{res[i]=src[i]._pb?await checkPB(src[i]):await ENG.check(src[i])}
-catch(e){res[i]={state:'DEAD',msg:'检测异常：'+String(e).slice(0,60)}}sched()}}
-await Promise.all(Array.from({length:N},w));running=false;$('go').disabled=false;$('pause').disabled=true;native_awake(false);save();render()};
+async function w(){while(p<idx.length){if(aborted)return;if(paused||!online){await new Promise(r=>setTimeout(r,300));continue}
+let i=idx[p++],r,ref=src[i];inflight++;
+try{r=src[i]._pb?await checkPB(src[i]):await ENG.check(src[i])}
+catch(e){r={state:'DEAD',msg:'检测异常：'+String(e).slice(0,60)}}
+inflight--;
+if(aborted||src[i]!==ref){continue}if(paused){held.push([i,r]);inflightNote()}else{res[i]=r;flushHeld();sched()}}}
+await Promise.all(Array.from({length:N},w));flushHeld();running=false;aborted=false;$('go').disabled=false;$('pause').disabled=true;native_awake(false);save();render()};
 async function exp(k,o){o=o||src.filter((_,i)=>k=='OKU'?['OK','UNCERTAIN'].includes(res[i].state):res[i].state==k);if(!o.length)return alert('没有数据');
 let txt=JSON.stringify(o.map(x=>{const y=Object.assign({},x);delete y._pb;delete y._enc;return y}),null,1),name=`书源_${k}_${o.length}.json`;window._ex=txt;window._nm=name;
 let box=$('exbox');box.style.display='block';
