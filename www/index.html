@@ -1,0 +1,119 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>书源检测</title><style>
+:root{--bg:#f2f3f7;--card:#fff;--tx:#1c1c1e;--sub:#8a8a8e;--line:#ececf0;--pri:#4f46e5;--ok:#16a34a;--un:#d97706;--dead:#dc2626;--wait:#94a3b8;--chip:#eceef5}
+@media(prefers-color-scheme:dark){:root{--bg:#0e0f13;--card:#1a1b21;--tx:#f2f2f7;--sub:#9a9aa3;--line:#2a2b33;--pri:#818cf8;--chip:#262833}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font:15px/1.45 -apple-system,"PingFang SC",sans-serif;background:var(--bg);color:var(--tx);padding-bottom:env(safe-area-inset-bottom)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 12px 8px}
+h1{font-size:20px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center}
+h1 small{font-size:12px;font-weight:400;color:var(--sub)}
+.card{background:var(--card);border-radius:14px;padding:12px;margin:0 12px 10px;box-shadow:0 1px 2px #0000000d}
+.bar{height:6px;background:var(--chip);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#6366f1,#22c55e);transition:width .3s}
+.pct{display:flex;justify-content:space-between;font-size:12px;color:var(--sub);margin:4px 0 8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.stat{background:var(--card);border-radius:12px;padding:8px 4px;text-align:center;border:2px solid transparent;cursor:pointer}
+.stat b{display:block;font-size:20px;line-height:1.2}.stat span{font-size:11px;color:var(--sub)}
+.stat.on{border-color:var(--pri)}
+.stat[data-k=OK] b{color:var(--ok)}.stat[data-k=UNCERTAIN] b{color:var(--un)}.stat[data-k=DEAD] b{color:var(--dead)}.stat[data-k=WAIT] b{color:var(--wait)}
+.btn{border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600;background:var(--pri);color:#fff}
+.btn.s{background:var(--chip);color:var(--tx)}.btn:disabled{opacity:.4}.btn.big{width:100%;padding:13px;font-size:16px}
+.row2{display:flex;gap:8px;margin-top:8px}.row2 .btn{flex:1}
+.set{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.set label{font-size:12px;color:var(--sub)}.set input{width:100%;margin-top:3px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--tx);font-size:15px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;color:var(--sub);position:relative}
+.drop input{position:absolute;inset:0;opacity:0;width:100%}
+.drop b{color:var(--pri)}
+#q{width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--chip);color:var(--tx);font-size:15px;margin:0 0 8px}
+.item{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.dot{flex:none;width:6px;border-radius:3px;margin:2px 0}
+.dot.OK{background:var(--ok)}.dot.UNCERTAIN{background:var(--un)}.dot.DEAD{background:var(--dead)}.dot.WAIT{background:var(--wait)}
+.nm{font-weight:600;word-break:break-all}.u{font-size:12px;color:var(--sub);word-break:break-all}
+.m{font-size:13px;margin-top:2px}.m.OK{color:var(--ok)}.m.UNCERTAIN{color:var(--un)}.m.DEAD{color:var(--dead)}.m.WAIT{color:var(--sub)}
+.ms{color:var(--sub);font-size:11px}
+.more{width:100%;margin-top:6px}
+#warn{display:none;margin:0 12px 8px;background:#fee2e2;color:#991b1b;padding:10px 12px;border-radius:12px;font-size:13px}
+#exbox{display:none}
+.tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tools .btn{padding:8px 12px;font-size:13px}
+.empty{text-align:center;color:var(--sub);padding:28px 0}
+details summary{cursor:pointer;color:var(--sub);font-size:13px;margin-top:10px}
+</style></head><body>
+<header><h1>书源检测 <small id="sub">未载入</small></h1>
+<div class="bar"><i id="pb"></i></div><div class="pct"><span id="pt">0%</span><span id="eta"></span></div>
+<div class="stats" id="stats"></div></header>
+<div id="warn">⚠ 检测服务已断开（App 可能被挂起），已自动暂停；回到 Minis 让服务恢复后会自动继续。</div>
+
+<div class="card">
+<div class="drop" id="drop"><input type="file" id="file" accept=".json,.txt"><div id="dtxt">📂 <b>点击选择书源 JSON</b></div></div>
+<details><summary>⚙ 检测参数</summary><div class="set">
+<div><label>并发</label><input type="number" id="conc" value="20" min="1" max="40"></div>
+<div><label>超时(秒)</label><input type="number" id="to" value="12"></div>
+<div><label>关键词</label><input type="text" id="kw" value="我"></div></div></details>
+<div class="row2"><button class="btn" id="go" disabled>▶ 开始检测</button><button class="btn s" id="pause" disabled>⏸ 暂停</button></div>
+<div class="tools"><button class="btn s" onclick="dedupe()">去重</button><button class="btn s" onclick="retry()">重测失效</button><button class="btn s" onclick="clr()">清空</button></div>
+</div>
+
+<div class="card" id="exbox"></div>
+
+<div class="card"><input id="q" type="search" placeholder="搜索名称 / 地址 / 原因" oninput="lim=100;render()">
+<div id="list"></div></div>
+
+<div class="card"><b style="font-size:14px">导出</b>
+<div class="tools"><button class="btn" onclick="exp('OK')">可用</button><button class="btn" onclick="exp('OKU')">可用+疑似</button><button class="btn s" onclick="exp('UNCERTAIN')">疑似</button><button class="btn s" onclick="exp('DEAD')">失效</button></div></div>
+
+<script src="engine.js"></script>
+<script>
+const __cb={};let __n=0;
+window.__nativeReply=(id,o)=>{const f=__cb[id];if(f){delete __cb[id];f(o)}};
+function nat(op,payload){return new Promise(r=>{const id='n'+(++__n);__cb[id]=r;window.webkit.messageHandlers.native.postMessage({id,op,payload})})}
+const native={
+ http:o=>nat('http',o),
+ enc:(s,cs)=>nat('enc',{s,cs}).then(r=>r.v),
+ jsEval:o=>nat('jsEval',o)
+};
+const ENG=BSEngine(native,{});
+</script>
+<script>
+let src=[],res=[],paused=false,running=false,filter='ALL',lim=100,online=true,wl=null,t0=0,d0=0;
+const $=id=>document.getElementById(id),K='bsc_v2',NM={OK:'可用',UNCERTAIN:'疑似',DEAD:'失效',WAIT:'待测'};
+function save(){try{localStorage.setItem(K,JSON.stringify({src,res}))}catch(e){}}
+function load(){try{let d=JSON.parse(localStorage.getItem(K));if(d&&d.src){src=d.src;res=d.res;$('go').disabled=false}}catch(e){}}
+function clr(){if(running||!confirm('清空已载入的书源和结果？'))return;src=[];res=[];localStorage.removeItem(K);$('dtxt').innerHTML='📂 <b>点击选择书源 JSON</b>';$('go').disabled=true;render()}
+$('file').onchange=async e=>{let f=e.target.files[0];if(!f)return;let t=await f.text();try{let j=JSON.parse(t);src=Array.isArray(j)?j:[j]}catch(x){alert('JSON 解析失败');return}
+res=src.map(_=>({state:'WAIT',msg:'待检测'}));$('go').disabled=false;$('dtxt').innerHTML='✅ '+esc(f.name)+'（'+src.length+' 条）';save();render()};
+function dedupe(){if(running)return;let seen=new Set(),ns=[],nr=[];src.forEach((s,i)=>{let k=(s.bookSourceUrl||'')+'|'+(s.bookSourceName||'');if(seen.has(k))return;seen.add(k);ns.push(s);nr.push(res[i])});
+alert(`去重：${src.length} → ${ns.length}`);src=ns;res=nr;save();render()}
+function retry(){if(running)return;let n=0;res.forEach((r,i)=>{if(r.state=='DEAD'){res[i]={state:'WAIT',msg:'待检测'};n++}});if(!n)return alert('没有失效项');save();render();$('go').click()}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function render(){let c={OK:0,UNCERTAIN:0,DEAD:0,WAIT:0};res.forEach(r=>c[r.state]++);let n=src.length,d=n-c.WAIT,p=n?Math.round(d/n*100):0;
+$('pb').style.width=p+'%';$('pt').textContent=n?`${d} / ${n}（${p}%）`:'0%';$('sub').textContent=n?`共 ${n} 条`:'未载入';
+if(running&&d>d0){let sp=(d-d0)/((Date.now()-t0)/1000),left=(c.WAIT)/sp;$('eta').textContent=isFinite(left)?`约剩 ${left>90?Math.round(left/60)+' 分钟':Math.round(left)+' 秒'}`:''}else $('eta').textContent='';
+$('stats').innerHTML=[['OK','可用'],['UNCERTAIN','疑似'],['DEAD','失效'],['WAIT','待测']].map(([k,t])=>`<div class="stat ${filter==k?'on':''}" data-k="${k}" onclick="filter=filter=='${k}'?'ALL':'${k}';lim=100;render()"><b>${c[k]}</b><span>${t}</span></div>`).join('');
+let q=$('q').value.trim().toLowerCase(),h='',m=0,tot=0;
+for(let i=0;i<n;i++){let r=res[i];if(filter!='ALL'&&r.state!=filter)continue;
+if(q&&!((src[i].bookSourceName||'')+(src[i].bookSourceUrl||'')+r.msg).toLowerCase().includes(q))continue;tot++;if(m>=lim)continue;m++;
+h+=`<div class="item"><div class="dot ${r.state}"></div><div style="min-width:0"><div class="nm">${esc(src[i].bookSourceName||'(无名)')}</div><div class="u">${esc(src[i].bookSourceUrl||'')}</div><div class="m ${r.state}">${NM[r.state]} · ${esc(r.msg)} ${r.ms?`<span class="ms">${r.ms}ms</span>`:''}</div></div></div>`}
+if(tot>m)h+=`<button class="btn s more" onclick="lim+=200;render()">再显示 200 条（${m}/${tot}）</button>`;
+$('list').innerHTML=h||`<div class="empty">${n?'没有符合的结果':'请先载入书源文件'}</div>`}
+let tm=null;function sched(){if(!tm)tm=setTimeout(()=>{tm=null;render();save()},800)}
+$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶ 继续':'⏸ 暂停'};
+function setOnline(v){online=v;$('warn').style.display=v?'none':'block'}
+$('go').onclick=async()=>{if(running)return;running=true;$('go').disabled=true;$('pause').disabled=false;t0=Date.now();d0=res.filter(r=>r.state!='WAIT').length;
+native_awake(true);
+ENG.reset();ENG.set('timeout',+$('to').value||12);ENG.set('kw',$('kw').value||'我');
+let idx=res.map((r,i)=>r.state=='WAIT'?i:-1).filter(i=>i>=0),p=0,N=+$('conc').value;
+async function w(){while(p<idx.length){if(paused||!online){await new Promise(r=>setTimeout(r,500));continue}
+let i=idx[p++];try{res[i]=await ENG.check(src[i])}
+catch(e){res[i]={state:'DEAD',msg:'检测异常：'+String(e).slice(0,60)}}sched()}}
+await Promise.all(Array.from({length:N},w));running=false;$('go').disabled=false;$('pause').disabled=true;native_awake(false);save();render()};
+async function exp(k){let o=src.filter((_,i)=>k=='OKU'?['OK','UNCERTAIN'].includes(res[i].state):res[i].state==k);if(!o.length)return alert('没有数据');
+let txt=JSON.stringify(o,null,1),name=`书源_${k}_${o.length}.json`;window._ex=txt;window._nm=name;
+let box=$('exbox');box.style.display='block';
+box.innerHTML=`<b>${name}</b>（${o.length} 条）<div class="tools"><button class="btn" onclick="sh()">分享 / 存到文件</button><button class="btn s" onclick="cp()">复制全部 JSON</button><button class="btn s" onclick="$('exbox').style.display='none'">关闭</button></div><div class="u" style="margin-top:6px">在阅读里“从剪贴板导入”，或把文件存到「文件」后导入</div>`;
+box.scrollIntoView({behavior:'smooth'})}
+async function cp(){await nat('clipboardWrite',{text:window._ex});alert('已复制，到阅读里“从剪贴板导入”即可')}
+async function sh(){await nat('shareFile',{name:window._nm,text:window._ex})}
+function native_awake(on){nat('keepAwake',{on})}
+load();if(src.length)$('dtxt').innerHTML='✅ 已恢复上次载入（'+src.length+' 条）';render();
+</script></body></html>
