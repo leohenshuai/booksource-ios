@@ -119,7 +119,12 @@ h3{margin:0 0 2px;font-size:15px}
 <div class="card glass">
  <div class="seg"><button class="on" id="m1" onclick="setMode('json')">Legado JSON</button><button id="m2" onclick="setMode('pb')">用心读书备份</button></div>
  <div class="drop" id="dropJ"><input type="file" id="file" accept=".json,.txt"><div id="dtxt">📂 <b>点击选择书源 JSON</b></div></div>
- <div class="drop" id="dropP" style="display:none;position:relative;z-index:2;cursor:pointer" onclick="pickBackup()"><div id="ptxt">🗂 <b>点击选择用心读书备份 zip</b></div></div>
+ <div id="dropP" style="display:none">
+  <div class="drop" style="position:relative;z-index:2;cursor:pointer" onclick="pickBackup()"><div id="ptxt">🗂 <b>从「文件」选择备份 zip</b></div></div>
+  <div class="u" style="margin:10px 2px 4px">或从 App 文件夹选择（在「文件」→ 我的 iPhone → 书源检测 里放入 zip）</div>
+  <div id="docs"></div>
+  <button class="btn s" style="margin-top:6px" onclick="loadDocs()">刷新列表</button>
+ </div>
  <details><summary>⚙︎ 检测参数</summary><div class="set">
   <div><label>并发</label><input type="number" id="conc" value="20" min="1" max="40"></div>
   <div><label>超时(秒)</label><input type="number" id="to" value="12"></div>
@@ -216,7 +221,24 @@ async function checkPB(s){const t0=Date.now(),kw=$('kw').value||'我',to=+$('to'
  return{state:st,msg:m,ms:Date.now()-t0}}
 let mode='json',pbRows=[];
 function setMode(m){if(running)return;mode=m;$('m1').classList.toggle('on',m=='json');$('m2').classList.toggle('on',m=='pb');$('dropJ').style.display=m=='json'?'':'none';$('dropP').style.display=m=='pb'?'':'none';
- $('btnExpBk').style.display=m=='pb'?'':'none';$('btnExpJ').style.display=m=='pb'?'none':''}
+ $('btnExpBk').style.display=m=='pb'?'':'none';if(m=='pb')loadDocs();$('btnExpJ').style.display=m=='pb'?'none':''}
+function fmtSz(n){return n>1048576?(n/1048576).toFixed(1)+' MB':Math.round(n/1024)+' KB'}
+async function loadDocs(){const r=await nat('listDocs',{});const box=$('docs');if(!r.ok||!r.files.length){box.innerHTML='<div class="u">App 文件夹里还没有 zip。把备份 zip 复制到「文件」→ 我的 iPhone → 书源检测 即可。</div>';return}
+ box.innerHTML=r.files.map((f,i)=>`<div class="item" onclick="openDoc(${i})"><div class="bd"><div class="l1"><span class="nm">${esc(f[0])}</span><span class="st WAIT">${fmtSz(f[1])}</span></div><div class="l2">点击读取</div></div><span class="chev">›</span></div>`).join('');window.__docs=r.files}
+async function openDoc(i){const f=window.__docs[i];if(!f||window.__pbBusy)return;window.__pbBusy=true;
+ const waitP=new Promise(ok=>{window.__pbWait=ok;setTimeout(()=>ok({ok:false,err:'读取超过 90 秒无响应'}),90000)});
+ $('ptxt').innerHTML='正在读取 '+esc(f[0])+'…';
+ const first=await nat('pbOpenPath',{path:f[2]});
+ if(!first.ok){window.__pbBusy=false;window.__pbWait=null;$('ptxt').innerHTML='🗂 <b>从「文件」选择备份 zip</b><div class="u" style="color:var(--dead)">'+esc(first.err)+'</div>';return}
+ await finishPb(await waitP)}
+window.pbIncoming=function(name){setMode('pb');window.__pbBusy=true;$('ptxt').innerHTML='已收到 '+esc(name)+'，正在读取…';
+ window.__pbWait=null;window.__pbIn=new Promise(ok=>{window.__pbWait=ok;setTimeout(()=>ok({ok:false,err:'读取超过 90 秒无响应'}),90000)});window.__pbIn.then(finishPb)};
+async function finishPb(r){window.__pbBusy=false;clearInterval(window.__pbTk);
+ if(!r.ok){$('ptxt').innerHTML='🗂 <b>点击重新选择</b><div class="u" style="color:var(--dead)">'+esc(r.err||'未知错误')+'</div>';return}
+ pbRows=r.sites.map(x=>({id:x[0],ident:x[1],name:x[2],url:x[3],xpath:x[4]}));
+ src=pbRows.map(x=>({bookSourceName:x.name,bookSourceUrl:x.url,_pb:x,_enc:!String(x.xpath).startsWith('{')}));
+ res=src.map(x=>x._enc?{state:'KEEP',msg:'规则已加密（禁止分享）'}:{state:'WAIT',msg:'待检测'});
+ $('ptxt').innerHTML='✅ '+esc(r.name)+'（'+src.length+' 条，其中 '+src.filter(x=>x._enc).length+' 条加密将保留）';$('go').disabled=false;filter='ALL';save();render()}
 async function pickBackup(){
  if(window.__pbBusy)return;window.__pbBusy=true;$('ptxt').innerHTML='请在弹出的文件选择器里选择备份 zip…';
  const fin=()=>{window.__pbBusy=false};

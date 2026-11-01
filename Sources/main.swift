@@ -398,6 +398,26 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
                 pk.delegate = self; pk.allowsMultipleSelection = false
                 self.present(pk, animated: true)
             }
+        case "listDocs":
+            let fm = FileManager.default
+            let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            var out: [[Any]] = []
+            for d in [docs, docs.appendingPathComponent("Inbox")] {
+                let fs = (try? fm.contentsOfDirectory(at: d, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
+                for f in fs where f.pathExtension.lowercased() == "zip" {
+                    let v = try? f.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                    out.append([f.lastPathComponent, v?.fileSize ?? 0, f.path, (v?.contentModificationDate ?? Date()).timeIntervalSince1970])
+                }
+            }
+            out.sort { ($0[3] as? Double ?? 0) > ($1[3] as? Double ?? 0) }
+            reply(id, ["ok": true, "files": out])
+        case "pbOpenPath":
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].standardizedFileURL.path
+            let u = URL(fileURLWithPath: p["path"] as? String ?? "").standardizedFileURL
+            guard u.path.hasPrefix(docs), FileManager.default.fileExists(atPath: u.path) else { return reply(id, ["ok": false, "err": "文件不存在或不在 App 文件夹内"]) }
+            backup = nil
+            reply(id, ["ok": true, "stage": "picked", "name": u.lastPathComponent])
+            loadBackup(u)
         case "pbExport":
             let ids = (p["ids"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.intValue }
             guard let b = backup else { return reply(id, ["ok": false, "err": "未载入备份"]) }
@@ -437,13 +457,7 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
     }
 
     // 文件选择回调：读取备份包的 customSite
-    func documentPicker(_ c: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let id = pickReply, let u = urls.first else { return }
-        pickReply = nil
-        backup = nil
-        scoped?.stopAccessingSecurityScopedResource(); scoped = nil
-        if u.startAccessingSecurityScopedResource() { scoped = u }   // 保持访问权：后续读取与回写都要读原文件
-        reply(id, ["ok": true, "stage": "picked", "name": u.lastPathComponent])
+    func loadBackup(_ u: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             let size = ((try? FileManager.default.attributesOfItem(atPath: u.path)[.size]) as? Int) ?? 0
             do { let t = try FileHandle(forReadingFrom: u); try t.close() } catch {
@@ -454,6 +468,30 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
             self.backup = b
             self.reply("pb_result", ["ok": true, "name": u.lastPathComponent, "sites": rows])
         }
+    }
+    func documentPicker(_ c: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let id = pickReply, let u = urls.first else { return }
+        pickReply = nil
+        backup = nil
+        scoped?.stopAccessingSecurityScopedResource(); scoped = nil
+        if u.startAccessingSecurityScopedResource() { scoped = u }
+        reply(id, ["ok": true, "stage": "picked", "name": u.lastPathComponent])
+        loadBackup(u)
+    }
+    // 从「文件」分享/打开到本 App
+    var pageReady = false
+    var pendingIncoming: URL?
+    func openIncoming(_ u: URL) {
+        scoped?.stopAccessingSecurityScopedResource(); scoped = nil
+        if u.startAccessingSecurityScopedResource() { scoped = u }
+        guard pageReady else { pendingIncoming = u; return }
+        backup = nil
+        web.evaluateJavaScript("window.pbIncoming&&window.pbIncoming(\(String(reflecting: u.lastPathComponent)))", completionHandler: nil)
+        loadBackup(u)
+    }
+    func webView(_ w: WKWebView, didFinish navigation: WKNavigation!) {
+        pageReady = true
+        if let u = pendingIncoming { pendingIncoming = nil; openIncoming(u) }
     }
     func documentPickerWasCancelled(_ c: UIDocumentPickerViewController) {
         if let id = pickReply { pickReply = nil; reply(id, ["ok": false, "err": "cancel"]) }
@@ -474,9 +512,17 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // 让「文件」App 里出现本 App 的文件夹
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let tip = docs.appendingPathComponent("把用心读书备份zip放到这里.txt")
+        if !FileManager.default.fileExists(atPath: tip.path) { try? "把用心读书的备份 zip 放到这个文件夹，回到 App 的「用心读书备份」页即可看到。".write(to: tip, atomically: true, encoding: .utf8) }
         window = UIWindow(frame: UIScreen.main.bounds)
         window?.rootViewController = VC()
         window?.makeKeyAndVisible()
+        return true
+    }
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        (window?.rootViewController as? VC)?.openIncoming(url)
         return true
     }
 }
