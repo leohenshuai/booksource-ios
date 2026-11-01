@@ -220,11 +220,12 @@ function setMode(m){if(running)return;mode=m;$('m1').classList.toggle('on',m=='j
 async function pickBackup(){
  if(window.__pbBusy)return;window.__pbBusy=true;$('ptxt').innerHTML='请在弹出的文件选择器里选择备份 zip…';
  const fin=()=>{window.__pbBusy=false};
+ const waitP=new Promise(ok=>{window.__pbWait=ok;setTimeout(()=>ok({ok:false,err:'读取超过 90 秒无响应'}),90000)});
  const first=await nat('pbPick',{});
- if(!first.ok){fin();$('ptxt').innerHTML='🗂 <b>点击选择用心读书备份 zip</b>'+(first.err&&first.err!='cancel'?'<div class="u">'+esc(first.err)+'</div>':'');return}
- $('ptxt').innerHTML='已选择 '+esc(first.name||'')+'，正在读取…（大文件需几秒）';
- const r=await new Promise(ok=>{window.__pbWait=ok;setTimeout(()=>ok({ok:false,err:'读取超过 60 秒无响应'}),60000)});
- fin();
+ if(!first.ok){fin();window.__pbWait=null;$('ptxt').innerHTML='🗂 <b>点击选择用心读书备份 zip</b>'+(first.err&&first.err!='cancel'?'<div class="u">'+esc(first.err)+'</div>':'');return}
+ let t0=Date.now();const tk=setInterval(()=>{$('ptxt').innerHTML='已选择 '+esc(first.name||'')+'，正在读取… '+Math.round((Date.now()-t0)/1000)+' 秒'},500);window.__pbTk=tk;
+ const r=await waitP;
+ fin();clearInterval(window.__pbTk);
  if(!r.ok){$('ptxt').innerHTML='🗂 <b>点击重新选择</b><div class="u" style="color:var(--dead)">'+esc(r.err||'未知错误')+'</div>';return}
  pbRows=r.sites.map(x=>({id:x[0],ident:x[1],name:x[2],url:x[3],xpath:x[4]}));
  src=pbRows.map(x=>({bookSourceName:x.name,bookSourceUrl:x.url,_pb:x,_enc:!String(x.xpath).startsWith('{')}));

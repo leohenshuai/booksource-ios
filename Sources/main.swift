@@ -331,6 +331,7 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
     var backup: Backup?
     var pickReply: String?
     var backupURL: URL?
+    var scoped: URL?
     var web: WKWebView!
     let net = Net()
     lazy var jsbox = JSBox(net: net)
@@ -393,7 +394,7 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
         case "pbPick":
             pickReply = id
             DispatchQueue.main.async {
-                let pk = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.item], asCopy: true)
+                let pk = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.item], asCopy: false)
                 pk.delegate = self; pk.allowsMultipleSelection = false
                 self.present(pk, animated: true)
             }
@@ -439,12 +440,17 @@ final class VC: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMe
     func documentPicker(_ c: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let id = pickReply, let u = urls.first else { return }
         pickReply = nil
+        backup = nil
+        scoped?.stopAccessingSecurityScopedResource(); scoped = nil
+        if u.startAccessingSecurityScopedResource() { scoped = u }   // 保持访问权：后续读取与回写都要读原文件
         reply(id, ["ok": true, "stage": "picked", "name": u.lastPathComponent])
         DispatchQueue.global(qos: .userInitiated).async {
             let size = ((try? FileManager.default.attributesOfItem(atPath: u.path)[.size]) as? Int) ?? 0
+            do { let t = try FileHandle(forReadingFrom: u); try t.close() } catch {
+                return self.reply("pb_result", ["ok": false, "err": "无法打开文件：\(error.localizedDescription)"]) }
             guard let b = Backup(url: u) else { return self.reply("pb_result", ["ok": false, "err": "无法解析 zip（\(u.lastPathComponent)，\(size) 字节）。可能不是 zip，或为 zip64"]) }
             guard b.entries.contains(where: { $0.name == "sql.mrbf" }) else { return self.reply("pb_result", ["ok": false, "err": "备份包里没有 sql.mrbf（共 \(b.entries.count) 个文件），不是用心读书备份"]) }
-            guard let rows = b.sites() else { return self.reply("pb_result", ["ok": false, "err": "读取书源表失败：sql.mrbf 无法打开或没有 customSite 表"]) }
+            guard let rows = b.sites() else { return self.reply("pb_result", ["ok": false, "err": "读取书源表失败：sql.mrbf 无法解压或没有 customSite 表"]) }
             self.backup = b
             self.reply("pb_result", ["ok": true, "name": u.lastPathComponent, "sites": rows])
         }
